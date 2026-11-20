@@ -1,0 +1,78 @@
+{
+  "name": "now-playing-theme",
+  "displayName": "Now Playing Theme",
+  "description": "Tints VS Code with the colors of the album art playing on Spotify or YouTube Music (Windows).",
+  "version": "0.4.0",
+  "publisher": "cris-dasalla",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/cris-dasalla/now-playing-theme.git" },
+  "bugs": { "url": "https://github.com/cris-dasalla/now-playing-theme/issues" },
+  "homepage": "https://github.com/cris-dasalla/now-playing-theme#readme",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Themes", "Other"],
+  "keywords": ["spotify", "youtube music", "album art", "theme", "colors"],
+  "os": ["win32"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "nowPlayingTheme.menu", "title": "Now Playing Theme: Options" },
+      { "command": "nowPlayingTheme.cycleDisplay", "title": "Now Playing Theme: Switch Background (Video / Cover / Colors)" },
+      { "command": "nowPlayingTheme.toggle", "title": "Now Playing Theme: Toggle On/Off" },
+      { "command": "nowPlayingTheme.restore", "title": "Now Playing Theme: Restore My Original Colors" },
+      { "command": "nowPlayingTheme.enableBackground", "title": "Now Playing Theme: Enable Album Art Background" },
+      { "command": "nowPlayingTheme.disableBackground", "title": "Now Playing Theme: Disable Album Art Background" },
+      { "command": "nowPlayingTheme.enableVideo", "title": "Now Playing Theme: Enable Music Video Background" },
+      { "command": "nowPlayingTheme.disableVideo", "title": "Now Playing Theme: Disable Music Video Background" }
+    ],
+    "configuration": {
+      "title": "Now Playing Theme",
+      "properties": {
+        "nowPlayingTheme.enabled": { "type": "boolean", "default": true, "description": "Tint VS Code with the current song's album art." },
+        "nowPlayingTheme.sources": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["spotify", "browser"] },
+          "default": ["spotify", "browser"],
+          "description": "Where to read the song from. 'browser' covers YouTube Music in Chrome/Edge/Firefox/Brave/Opera (note: it also picks up regular YouTube videos)."
+        },
+        "nowPlayingTheme.scope": {
+          "type": "string",
+          "enum": ["frame", "full"],
+          "enumDescriptions": ["Title bar, activity bar and status bar only.", "Also tints the editor, sidebar, tabs, panel and terminal backgrounds (kept dark so code stays readable)."],
+          "default": "full"
+        },
+        "nowPlayingTheme.video.enabled": { "type": "boolean", "default": true, "markdownDescription": "Play the song's music video (muted) behind your code. Needs the album-art background and yt-dlp - run **Enable Music Video Background** once." },
+        "nowPlayingTheme.video.mode": {
+          "type": "string",
+          "enum": ["full", "loop"],
+          "enumDescriptions": ["Full video, synced to the song's position (~2-6 MB per song).", "Tiny low-res copy looping a 30-second slice; not synced (~0.5-2 MB per song)."],
+          "default": "full"
+        },
+        "nowPlayingTheme.video.delaySeconds": { "type": "number", "default": 10, "minimum": 0, "description": "Wait this long into a new song before downloading its video, so skipped songs cost nothing." },
+        "nowPlayingTheme.video.cacheMB": { "type": "number", "default": 300, "minimum": 50, "description": "Max disk space for saved videos; least-recently-played are deleted first." },
+        "nowPlayingTheme.colors.enabled": { "type": "boolean", "default": true, "description": "Tint the title bar, status bar, etc. with the cover's colors." },
+        "nowPlayingTheme.background.enabled": { "type": "boolean", "default": false, "markdownDescription": "Show the cover art behind your code. Turn on with the **Enable Album Art Background** command (it patches VS Code's workbench.html)." },
+        "nowPlayingTheme.background.style": {
+          "type": "string",
+          "enum": ["poster", "blurred", "sharp"],
+          "enumDescriptions": ["Sharp cover on the right, fading into a blurred fill.", "Blurred cover filling the window.", "Sharp cover filling the window."],
+          "default": "poster"
+        },
+        "nowPlayingTheme.background.opacity": { "type": "number", "default": 0.2, "minimum": 0.02, "maximum": 0.8, "description": "How strongly the cover shows through (0.1 = subtle, 0.35 = bold)." },
+        "nowPlayingTheme.restoreWhenStopped": { "type": "boolean", "default": true, "description": "Put your original colors back when the music app closes." },
+        "nowPlayingTheme.pollIntervalMs": { "type": "number", "default": 1500, "minimum": 500, "description": "How often to check what's playing." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "~1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}
