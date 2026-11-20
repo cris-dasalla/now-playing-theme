@@ -4,9 +4,12 @@ import * as readline from 'readline';
 import { spawn, ChildProcess } from 'child_process';
 import { extractPalette, buildColors, OWNED_KEYS, Scope } from './palette';
 import * as bg from './background';
-import * as fs from 'fs';
-import { VideoManager, VideoMode, hasYtDlp, downloadYtDlp, YTDLP } from './video';
-import { Display, DISPLAYS, DISPLAY_INFO, getDisplay, setDisplay } from './display';
+import type { VideoManager, VideoMode } from './video';
+import { VIDEO_FEATURE } from './features';
+// Loaded only when the video feature is built in; the public package doesn't ship out/video.js.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const video: typeof import('./video') | undefined = VIDEO_FEATURE ? require('./video') : undefined;
+import { Display, DISPLAYS, DISPLAY_INFO, getDisplay, setDisplay, hasDisplayChoice } from './display';
 
 interface NowPlaying {
     running: boolean;
@@ -40,7 +43,7 @@ let latest: NowPlaying | undefined;
 let appliedKey = '';
 let lastBgState = '';
 let log: vscode.OutputChannel;
-let videos: VideoManager;
+let videos: VideoManager | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     ctx = context;
@@ -50,8 +53,11 @@ export function activate(context: vscode.ExtensionContext) {
     modeItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -100.5); // just right of the song
     modeItem.command = 'nowPlayingTheme.cycleDisplay';
     context.subscriptions.push(log, statusItem, modeItem);
-    videos = new VideoManager(log, () => { if (latest && isLeader()) { lastBgState = ''; writeBackground(latest); } });
-    context.subscriptions.push({ dispose: () => videos.cancel() });
+    if (video) {
+        const vm = new video.VideoManager(log, () => { if (latest && isLeader()) { lastBgState = ''; writeBackground(latest); } });
+        videos = vm;
+        context.subscriptions.push({ dispose: () => vm.cancel() });
+    }
 
     if (process.platform !== 'win32') {
         vscode.window.showWarningMessage('Now Playing Theme currently supports Windows only.');
@@ -71,10 +77,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('nowPlayingTheme.menu', showMenu),
         vscode.commands.registerCommand('nowPlayingTheme.enableBackground', enableBackground),
         vscode.commands.registerCommand('nowPlayingTheme.disableBackground', disableBackground),
-        vscode.commands.registerCommand('nowPlayingTheme.enableVideo', enableVideo),
-        vscode.commands.registerCommand('nowPlayingTheme.disableVideo', async () => {
-            await vscode.workspace.getConfiguration(CFG).update('video.enabled', false, vscode.ConfigurationTarget.Global);
-        }),
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration(CFG)) { appliedKey = ''; lastBgState = ''; restart(); }
         }),
@@ -84,7 +86,18 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.onDidChangeActiveColorTheme(() => { appliedKey = ''; if (latest) { handle(latest); } }),
         { dispose: stop },
     );
+    if (video) {
+        context.subscriptions.push(
+            vscode.commands.registerCommand('nowPlayingTheme.enableVideo', enableVideo),
+            vscode.commands.registerCommand('nowPlayingTheme.disableVideo', async () => {
+                await vscode.workspace.getConfiguration(CFG).update('video.enabled', false, vscode.ConfigurationTarget.Global);
+                if (getDisplay() === 'video') { applyDisplay(bg.isPatched() ? 'cover' : 'colors'); } // never re-patches
+            }),
+        );
+    }
     if (vscode.window.state.focused || !ctx.globalState.get(LEADER_KEY)) { claimLeader(); }
+    // Upgrade from <= 0.4.x: background installed but no mode ever saved -> keep showing it (default is now Colors).
+    if (!hasDisplayChoice() && bg.isPatched()) { setDisplay(video?.hasYtDlp() ? 'video' : 'cover'); }
     // Already patched: refresh npt-bg.js (extension upgrades) and the product.json checksum. Idempotent.
     if (bg.isPatched()) {
         const r = bg.patch(ctx.extensionPath);
@@ -135,7 +148,8 @@ function restart() {
     const script = path.join(ctx.extensionPath, 'media', 'now-playing.ps1');
     const interval = Math.max(500, cfg.get<number>('pollIntervalMs', 1500));
     const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
-        '-IntervalMs', String(interval), '-Sources', sources];
+        '-IntervalMs', String(interval), '-Sources', sources,
+        '-MinTrackMs', String(Math.max(0, cfg.get<number>('minTrackSeconds', 60)) * 1000)];
     if (backgroundOn()) { args.push('-CoverDir', bg.nptDir()!); }
 
     proc = spawn('powershell.exe', args, { windowsHide: true });
@@ -156,10 +170,10 @@ function handle(np: NowPlaying) {
 
     if (videoOn()) {
         const v = vscode.workspace.getConfiguration(CFG);
-        videos.track(np.running ? np : {}, path.join(bg.nptDir()!, 'videos'),
+        videos?.track(np.running ? np : {}, path.join(bg.nptDir()!, 'videos'),
             v.get<VideoMode>('video.mode', 'full'), v.get<number>('video.delaySeconds', 10), v.get<number>('video.cacheMB', 300));
     } else {
-        videos.track({}, '', 'full', 0, 0); // clears any pending work
+        videos?.track({}, '', 'full', 0, 0); // clears any pending work
     }
     writeBackground(np);
     if (!np.running) {
@@ -204,9 +218,15 @@ function updateModeItem() {
     modeItem.show();
 }
 
+/** User picked a mode: make sure its prerequisites exist (may prompt), then switch. */
 async function chooseDisplay(mode: Display) {
-    if (mode !== 'colors' && !bg.isPatched()) { await enableBackground(); if (!bg.isPatched()) { return; } }
-    if (mode === 'video' && !hasYtDlp()) { await enableVideo(); if (!hasYtDlp()) { return; } }
+    if (mode !== 'colors' && !(await ensureBackground())) { return; }
+    if (mode === 'video' && !(await ensureVideoReady())) { return; }
+    applyDisplay(mode);
+}
+
+/** Switch mode and refresh everything that depends on it. No prompts. */
+function applyDisplay(mode: Display) {
     setDisplay(mode);
     claimLeader();
     lastBgState = '';
@@ -238,7 +258,7 @@ async function showMenu() {
 function writeBackground(np: NowPlaying) {
     if (!bg.isPatched()) { return; }
     const cfg = vscode.workspace.getConfiguration(CFG);
-    const videoFile = videoOn() && np.running ? videos.fileFor(np) : undefined;
+    const videoFile = videoOn() && np.running ? videos?.fileFor(np) : undefined;
     const state: bg.BackgroundState = {
         visible: getDisplay() !== 'colors' && np.running && (!!np.coverFile || !!videoFile),
         cover: np.coverFile ?? null,
@@ -258,17 +278,26 @@ function writeBackground(np: NowPlaying) {
     try { bg.writeState(state); } catch (e) { log.appendLine(`Background write failed: ${String(e)}`); }
 }
 
+/** Command: install the background and show the cover. */
 async function enableBackground() {
+    if (!(await ensureBackground())) { return; }
+    if (getDisplay() === 'colors') { applyDisplay('cover'); } // the user asked for a background - show one
+}
+
+/** Patches VS Code (after a confirmation) if needed. True when the background is installed. */
+async function ensureBackground(): Promise<boolean> {
+    if (bg.isPatched()) { return true; }
     const ok = await vscode.window.showWarningMessage(
         'The album-art background works by adding one script tag to VS Code\'s own workbench.html ' +
         '(and updating its checksum so VS Code doesn\'t report a corrupt install). ' +
         'VS Code updates remove it - you\'ll be offered to re-apply. Use "Disable Album Art Background" to undo.',
         { modal: true }, 'Enable');
-    if (ok !== 'Enable') { return; }
+    if (ok !== 'Enable') { return false; }
     const r = bg.patch(ctx.extensionPath);
-    if (r.error) { vscode.window.showErrorMessage(r.error); return; }
+    if (r.error) { vscode.window.showErrorMessage(r.error); return false; }
     await vscode.workspace.getConfiguration(CFG).update('background.enabled', true, vscode.ConfigurationTarget.Global);
     promptReload('Album-art background installed. Reload the window to see it.');
+    return true;
 }
 
 async function disableBackground() {
@@ -281,45 +310,27 @@ async function disableBackground() {
 // ---------- music video ----------
 
 function videoOn() {
-    return getDisplay() === 'video' && bg.isPatched() && hasYtDlp()
+    return !!video && getDisplay() === 'video' && bg.isPatched() && video.hasYtDlp()
         && vscode.workspace.getConfiguration(CFG).get<boolean>('video.enabled', true);
 }
 
+/** Command: turn the music video on. */
 async function enableVideo() {
-    if (!bg.isPatched()) {
-        await enableBackground();
-        if (!bg.isPatched()) { return; }
-    }
-    if (!hasYtDlp()) {
-        const ok = await vscode.window.showInformationMessage(
-            'The music-video background uses yt-dlp (free, open source, ~20 MB) to find each song\'s video on YouTube ' +
-            'and save a small muted copy (about 2-6 MB per song, auto-deleted past the cache limit). ' +
-            'Note: saving YouTube videos is against YouTube\'s Terms of Service. Download yt-dlp now?',
-            { modal: true }, 'Download yt-dlp');
-        if (ok !== 'Download yt-dlp') { return; }
-        try {
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Downloading yt-dlp…' },
-                () => downloadYtDlp());
-        } catch (e) {
-            vscode.window.showErrorMessage(`yt-dlp download failed: ${String(e)}`);
-            return;
-        }
-    }
-    await vscode.workspace.getConfiguration(CFG).update('video.enabled', true, vscode.ConfigurationTarget.Global);
+    if (!(await ensureBackground()) || !(await ensureVideoReady())) { return; }
+    applyDisplay('video');
     vscode.window.showInformationMessage('Music-video background on. Each new song\'s video appears after it has played for a few seconds.');
 }
 
-/** YouTube changes often; stale yt-dlp builds stop working. Self-update at most once a week. */
+/** Video tooling present (may prompt to download) and video.enabled on. True when the video mode can work. */
+async function ensureVideoReady(): Promise<boolean> {
+    if (!video || !(await video.ensureYtDlp())) { return false; }
+    const cfg = vscode.workspace.getConfiguration(CFG);
+    if (!cfg.get<boolean>('video.enabled', true)) { await cfg.update('video.enabled', true, vscode.ConfigurationTarget.Global); }
+    return true;
+}
+
 function updateYtDlpWeekly() {
-    if (!hasYtDlp() || !vscode.window.state.focused) { return; }
-    const age = Date.now() - fs.statSync(YTDLP).mtimeMs;
-    if (age < 7 * 24 * 3600 * 1000) { return; }
-    const p = spawn(YTDLP, ['-U'], { windowsHide: true });
-    p.on('close', code => {
-        log.appendLine(`yt-dlp self-update exited (${code})`);
-        const now = new Date();
-        try { fs.utimesSync(YTDLP, now, now); } catch { /* next start retries */ }
-    });
+    if (video && vscode.window.state.focused) { video.updateYtDlpWeekly(log); }
 }
 
 /** A VS Code update replaces workbench.html, silently dropping the patch - offer to re-apply. */

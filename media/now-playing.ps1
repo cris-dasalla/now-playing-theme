@@ -7,6 +7,8 @@ param(
     [string]$Sources = 'Spotify|Chrome|MSEdge|Firefox|Brave|Opera|Vivaldi',
     # When set, the full-size cover is also saved here (the background feature reads it).
     [string]$CoverDir = '',
+    # Tracks shorter than this are ignored (YouTube ads report themselves as tracks). 0 = off.
+    [int]$MinTrackMs = 60000,
     [switch]$Once
 )
 
@@ -89,10 +91,21 @@ function Read-Cover($thumbRef) {
 $last = ''
 while ($true) {
     $out = @{ running = $false }
-    # Prefer a session that is actually playing; fall back to a paused one so the colors stay put.
+    # Several players open (Spotify + browser, two browsers): follow the one the user means, without flip-flopping.
+    # (Several tabs in ONE browser are already a single session - the browser reports its active tab.)
     $candidates = @($mgr.GetSessions() | Where-Object { $_.SourceAppUserModelId -match $Sources })
-    $session = $candidates | Where-Object { $_.GetPlaybackInfo().PlaybackStatus.ToString() -eq 'Playing' } | Select-Object -First 1
+    $playingNow = @($candidates | Where-Object { $_.GetPlaybackInfo().PlaybackStatus.ToString() -eq 'Playing' })
+    $cur = $mgr.GetCurrentSession()   # what Windows' volume flyout / media keys control = most recently started
+    $curId = if ($cur) { $cur.SourceAppUserModelId } else { $null }
+    $byId = { param($list, $id) $list | Where-Object { $_.SourceAppUserModelId -eq $id } | Select-Object -First 1 }
+    $session = $null
+    if ($curId) { $session = & $byId $playingNow $curId }                                         # 1. Windows' current, if it's ours and playing
+    if (-not $session -and $script:followId) { $session = & $byId $playingNow $script:followId }  # 2. keep the one we follow while it plays
+    if (-not $session) { $session = $playingNow | Select-Object -First 1 }                        # 3. anything playing
+    if (-not $session -and $script:followId) { $session = & $byId $candidates $script:followId }  # 4. all paused: stay put
+    if (-not $session -and $curId) { $session = & $byId $candidates $curId }
     if (-not $session) { $session = $candidates | Select-Object -First 1 }
+    $script:followId = if ($session) { $session.SourceAppUserModelId } else { $null }
     if ($session) {
         $props = Await ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
         $cover = $null
@@ -125,6 +138,16 @@ while ($true) {
             size    = $Size
         }
     }
+    # Short "track" = almost always an ad: report nothing, so colors/cover/video stay on the real song.
+    if (-not $Once -and $MinTrackMs -gt 0 -and $null -ne $out.durationMs -and $out.durationMs -lt $MinTrackMs) {
+        if ($script:skipped -ne $out.title) {   # once per item, to the extension's Output log (stderr)
+            $script:skipped = $out.title
+            [Console]::Error.WriteLine("Ignored short track ($([int]($out.durationMs / 1000)) s, likely an ad): $($out.title)")
+        }
+        Start-Sleep -Milliseconds $IntervalMs
+        continue
+    }
+
     $key = "$($out.running)|$($out.playing)|$($out.title)|$($out.artist)|$($out.coverHash)"
 
     # Seek detection: position jumped away from where steady playback would put it.

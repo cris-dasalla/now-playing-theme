@@ -2,7 +2,9 @@
   "name": "now-playing-theme",
   "displayName": "Now Playing Theme",
   "description": "Tints VS Code with the colors of the album art playing on Spotify or YouTube Music (Windows).",
-  "version": "0.4.0",
+  "version": "0.5.0",
+  "icon": "media/icon.png",
+  "galleryBanner": { "color": "#2a1b3d", "theme": "dark" },
   "publisher": "cris-dasalla",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/cris-dasalla/now-playing-theme.git" },
@@ -60,6 +62,7 @@
         },
         "nowPlayingTheme.background.opacity": { "type": "number", "default": 0.2, "minimum": 0.02, "maximum": 0.8, "description": "How strongly the cover shows through (0.1 = subtle, 0.35 = bold)." },
         "nowPlayingTheme.restoreWhenStopped": { "type": "boolean", "default": true, "description": "Put your original colors back when the music app closes." },
+        "nowPlayingTheme.minTrackSeconds": { "type": "number", "default": 60, "minimum": 0, "description": "Ignore anything shorter than this, so YouTube ads don't change the theme. 0 = follow everything." },
         "nowPlayingTheme.pollIntervalMs": { "type": "number", "default": 1500, "minimum": 500, "description": "How often to check what's playing." }
       }
     }
@@ -67,7 +70,8 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
-    "package": "vsce package"
+    "package": "vsce package",
+    "package:public": "node scripts/package-public.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

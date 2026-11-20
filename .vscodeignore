@@ -3,3 +3,6 @@ node_modules/**
 **/*.map
 tsconfig.json
 .gitignore
+scripts/**
+dist/**
+*.vsix

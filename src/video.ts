@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
 import { spawn, ChildProcess } from 'child_process';
+import { TOOL_DIR } from './paths';
 
 export type VideoMode = 'full' | 'loop';
 
@@ -24,8 +25,6 @@ export function pickBest(lines: string[], durationMs?: number | null): string | 
     return hits[0].id;
 }
 
-/** yt-dlp + the query->video-id index live outside VS Code's install, so both profiles and updates share them. */
-export const TOOL_DIR = path.join(process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? '.', 'AppData', 'Local'), 'now-playing-theme');
 export const YTDLP = path.join(TOOL_DIR, 'yt-dlp.exe');
 const INDEX = path.join(TOOL_DIR, 'video-index.json');
 const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
@@ -55,6 +54,38 @@ export async function downloadYtDlp(): Promise<void> {
         get(YTDLP_URL, 0);
     });
     fs.renameSync(tmp, YTDLP);
+}
+
+/** Asks before downloading yt-dlp (with the ToS note). Returns true when yt-dlp is ready to use. */
+export async function ensureYtDlp(): Promise<boolean> {
+    if (hasYtDlp()) { return true; }
+    const ok = await vscode.window.showInformationMessage(
+        'The music-video background uses yt-dlp (free, open source, ~20 MB) to find each song\'s video on YouTube ' +
+        'and save a small muted copy (about 2-6 MB per song, auto-deleted past the cache limit). ' +
+        'Note: saving YouTube videos is against YouTube\'s Terms of Service. Download yt-dlp now?',
+        { modal: true }, 'Download yt-dlp');
+    if (ok !== 'Download yt-dlp') { return false; }
+    try {
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Downloading yt-dlp…' },
+            () => downloadYtDlp());
+        return true;
+    } catch (e) {
+        vscode.window.showErrorMessage(`yt-dlp download failed: ${String(e)}`);
+        return false;
+    }
+}
+
+/** YouTube changes often; stale yt-dlp builds stop working. Self-update at most once a week. */
+export function updateYtDlpWeekly(log: vscode.OutputChannel) {
+    // throwIfNoEntry: another window's `yt-dlp -U` may be swapping the exe right now - never fail activation over it.
+    const stat = fs.statSync(YTDLP, { throwIfNoEntry: false });
+    if (!stat || Date.now() - stat.mtimeMs < 7 * 24 * 3600 * 1000) { return; }
+    const p = spawn(YTDLP, ['-U'], { windowsHide: true });
+    p.on('close', code => {
+        log.appendLine(`yt-dlp self-update exited (${code})`);
+        const now = new Date();
+        try { fs.utimesSync(YTDLP, now, now); } catch { /* next start retries */ }
+    });
 }
 
 /** "MalcolmToddVEVO" / "Artist - Topic" -> clean artist; adds "official music video" when the title isn't already a video title. */

@@ -2,10 +2,11 @@
 // Stored in a shared file (not a setting) so every VS Code profile/window agrees - settings are per profile.
 import * as fs from 'fs';
 import * as path from 'path';
-import { TOOL_DIR } from './video';
+import { TOOL_DIR } from './paths';
+import { VIDEO_FEATURE } from './features';
 
 export type Display = 'video' | 'cover' | 'colors';
-export const DISPLAYS: Display[] = ['video', 'cover', 'colors'];
+export const DISPLAYS: Display[] = VIDEO_FEATURE ? ['video', 'cover', 'colors'] : ['cover', 'colors'];
 
 const FILE = path.join(TOOL_DIR, 'display.json');
 
@@ -20,8 +21,11 @@ export function getDisplay(): Display {
         const mode = JSON.parse(fs.readFileSync(FILE, 'utf8')).mode;
         if (DISPLAYS.includes(mode)) { return mode; }
     } catch { /* no file yet -> default */ }
-    return 'video';
+    return 'colors'; // least intrusive; the background is opt-in via the status-bar switch
 }
+
+/** False until the user (or an upgrade) has saved a mode. */
+export function hasDisplayChoice(): boolean { return fs.existsSync(FILE); }
 
 export function setDisplay(mode: Display) {
     fs.mkdirSync(TOOL_DIR, { recursive: true });
