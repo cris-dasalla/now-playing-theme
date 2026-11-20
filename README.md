@@ -18,7 +18,11 @@ No Spotify login, API key or account needed: it reads what Windows already shows
 ## How it works
 - A small PowerShell script reads Windows' media session (the same info shown in the volume flyout).
 - Colors are written to `workbench.colorCustomizations` in your user settings. Your original values are backed up and restored when the music app closes, or via **Now Playing Theme: Restore My Original Colors**.
-- **The background modifies VS Code's own files**, because VS Code has no API for backgrounds. It adds one `<script>` tag to `workbench.html` and updates that file's checksum in `product.json`, so VS Code doesn't report a "corrupt" install. Originals are backed up.
+- **The background modifies VS Code's own files**, because VS Code has no API for backgrounds. It adds one `<script>` tag to `workbench.html` (original backed up).
+  - VS Code then says its installation *"appears to be corrupt"*. That's expected and harmless; choose **Don't Show Again**.
+<!-- personal -->
+  - The personal build also updates that file's checksum in `product.json`, so the notice never appears.
+<!-- /personal -->
   - Every VS Code update removes it; the extension notices and offers **Re-apply**.
   - Run **Disable Album Art Background** before uninstalling the extension, to put VS Code's files back.
 <!-- personal -->

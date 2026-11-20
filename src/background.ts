@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { FIX_CHECKSUM } from './features';
 
 const MARK_START = '<!-- now-playing-theme -->';
 const MARK_END = '<!-- /now-playing-theme -->';
@@ -77,32 +78,11 @@ export function patch(extensionPath: string): PatchResult {
     return { scriptChanged };
 }
 
-/**
- * VS Code flags "installation appears to be corrupt" when a file's sha256 differs from product.json's
- * checksums. Record the patched workbench.html's hash there (original product.json kept as a backup).
- */
-function syncChecksum(html: string) {
-    const outDir = path.join(vscode.env.appRoot, 'out');
-    const product = path.join(vscode.env.appRoot, 'product.json');
-    const key = path.relative(outDir, html).split(path.sep).join('/');
-    const json = JSON.parse(fs.readFileSync(product, 'utf8'));
-    if (!json.checksums || !(key in json.checksums)) { return; }
-    const hash = crypto.createHash('sha256').update(fs.readFileSync(html)).digest('base64').replace(/=+$/, '');
-    if (json.checksums[key] === hash) { return; }
-    const backup = product + '.npt-original';
-    if (!fs.existsSync(backup)) { fs.copyFileSync(product, backup); }
-    json.checksums[key] = hash;
-    // Several windows may activate at once; a torn product.json would stop VS Code from starting.
-    const tmp = `${product}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(json, null, '\t'));
-    fs.renameSync(tmp, product);
-}
-
-function restoreProduct() {
-    const product = path.join(vscode.env.appRoot, 'product.json');
-    const backup = product + '.npt-original';
-    if (fs.existsSync(backup)) { fs.copyFileSync(backup, product); fs.rmSync(backup); }
-}
+// Checksum fix-up lives in integrity.ts, which only the personal build ships (see features.ts).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const integrity: typeof import('./integrity') | undefined = FIX_CHECKSUM ? require('./integrity') : undefined;
+function syncChecksum(html: string) { integrity?.syncChecksum(html); }
+function restoreProduct() { integrity?.restoreProduct(); }
 
 export function unpatch(): string | undefined {
     const dir = workbenchDir();

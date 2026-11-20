@@ -5,7 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { extractPalette, buildColors, OWNED_KEYS, Scope } from './palette';
 import * as bg from './background';
 import type { VideoManager, VideoMode } from './video';
-import { VIDEO_FEATURE } from './features';
+import { VIDEO_FEATURE, FIX_CHECKSUM } from './features';
 // Loaded only when the video feature is built in; the public package doesn't ship out/video.js.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const video: typeof import('./video') | undefined = VIDEO_FEATURE ? require('./video') : undefined;
@@ -147,7 +147,8 @@ function restart() {
         .map(s => SOURCE_PATTERNS[s]).filter(Boolean).join('|') || SOURCE_PATTERNS.spotify;
     const script = path.join(ctx.extensionPath, 'media', 'now-playing.ps1');
     const interval = Math.max(500, cfg.get<number>('pollIntervalMs', 1500));
-    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
+    // RemoteSigned (not Bypass): enough to run the extension's own local script on default Windows setups.
+    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'RemoteSigned', '-File', script,
         '-IntervalMs', String(interval), '-Sources', sources,
         '-MinTrackMs', String(Math.max(0, cfg.get<number>('minTrackSeconds', 60)) * 1000)];
     if (backgroundOn()) { args.push('-CoverDir', bg.nptDir()!); }
@@ -288,8 +289,9 @@ async function enableBackground() {
 async function ensureBackground(): Promise<boolean> {
     if (bg.isPatched()) { return true; }
     const ok = await vscode.window.showWarningMessage(
-        'The album-art background works by adding one script tag to VS Code\'s own workbench.html ' +
-        '(and updating its checksum so VS Code doesn\'t report a corrupt install). ' +
+        'The album-art background works by adding one script tag to VS Code\'s own workbench.html. ' +
+        (FIX_CHECKSUM ? '(Its checksum is updated too, so VS Code doesn\'t report a corrupt install.) '
+            : 'VS Code will then say its installation "appears to be corrupt" - that\'s expected and harmless; choose "Don\'t Show Again". ') +
         'VS Code updates remove it - you\'ll be offered to re-apply. Use "Disable Album Art Background" to undo.',
         { modal: true }, 'Enable');
     if (ok !== 'Enable') { return false; }

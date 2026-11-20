@@ -29,7 +29,9 @@ try {
     const pkg = JSON.parse(fs.readFileSync(at('package.json'), 'utf8'));
     if (publisher) { pkg.publisher = publisher; }
     pkg.preview = true;
-    pkg.description = 'Tints VS Code with the album art of the song playing on Spotify or YouTube Music, with an optional cover background (Windows).';
+    // Brand-neutral manifest: new publishers' uploads were rejected as "suspicious metadata" with brand names here.
+    pkg.description = 'Tints VS Code with the album art of the song you are playing, with an optional cover background (Windows).';
+    pkg.keywords = ['music', 'now playing', 'album art', 'theme', 'colors'];
     pkg.contributes.commands = pkg.contributes.commands
         .filter(c => !/Video$/.test(c.command))
         .map(c => c.command === 'nowPlayingTheme.cycleDisplay' ? { ...c, title: 'Now Playing Theme: Switch Background (Cover / Colors)' } : c);
@@ -41,12 +43,15 @@ try {
     const readme = fs.readFileSync(at('README.md'), 'utf8');
     fs.writeFileSync(at('README.md'), readme.replace(/<!-- personal -->[\s\S]*?<!-- \/personal -->\r?\n?/g, ''));
 
-    // Code: compile without the video feature and don't ship out/video.js.
-    const features = fs.readFileSync(at('src/features.ts'), 'utf8');
-    const flipped = features.replace(/VIDEO_FEATURE: boolean = true/, 'VIDEO_FEATURE: boolean = false');
-    if (flipped === features) { throw new Error('could not flip VIDEO_FEATURE'); }
-    fs.writeFileSync(at('src/features.ts'), flipped);
-    fs.appendFileSync(at('.vscodeignore'), '\nout/video.js\n');
+    // Code: compile without the video feature / checksum fix-up and don't ship their modules.
+    let features = fs.readFileSync(at('src/features.ts'), 'utf8');
+    for (const flag of ['VIDEO_FEATURE', 'FIX_CHECKSUM']) {
+        const next = features.replace(`${flag}: boolean = true`, `${flag}: boolean = false`);
+        if (next === features) { throw new Error(`could not flip ${flag}`); }
+        features = next;
+    }
+    fs.writeFileSync(at('src/features.ts'), features);
+    fs.appendFileSync(at('.vscodeignore'), '\nout/video.js\nout/integrity.js\n');
 
     run('npx tsc -p .');
     const dist = path.join(root, 'dist');
